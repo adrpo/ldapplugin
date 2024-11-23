@@ -23,6 +23,7 @@
 import ldap
 import re
 import time
+import functools
 
 from trac.core import *
 from trac.perm import IPermissionGroupProvider, IPermissionStore
@@ -43,6 +44,9 @@ GROUP_PREFIX = '@'
 
 # regular expression to explode a DN into a (attr, rdn, basedn)
 DN_RE = re.compile(r'^(?P<attr>.+?)=(?P<rdn>.+?),(?P<base>.+)$')
+
+def cmp(a, b):
+    return (a > b) - (a < b)
 
 
 class LdapPermissionGroupProvider(Component):
@@ -71,7 +75,6 @@ class LdapPermissionGroupProvider(Component):
         # max cache entries
         self._cache_size = min(25, int(self.config.get('ldap', 'cache_size',
                                                        '100')))
-
     # IPermissionProvider interface
 
     def get_permission_groups(self, username):
@@ -115,10 +118,12 @@ class LdapPermissionGroupProvider(Component):
                 # the cache is becoming too large, discards
                 # the less recently uses entries
                 cache_keys = self._cache.keys()
-                cache_keys.sort(lambda x,y: cmp(self._cache[x][0],
-                                                self._cache[y][0]))
+                cache_keys = sorted(cache_keys,
+                                    key=functools.cmp_to_key(
+                                        lambda x,y:
+                                        cmp(self._cache[x][0], self._cache[y][0])))
                 # discards the 5% oldest
-                old_keys = cache_keys[:(5*self._cache_size)/100]
+                old_keys = cache_keys[:int((5*self._cache_size)/100)+1]
                 for k in old_keys:
                     del self._cache[k]
         else:
@@ -272,6 +277,7 @@ class LdapPermissionStore(Component):
                 xaction = self._extract_action(action)
                 if not xaction:
                     continue
+                xaction = xaction.decode('utf-8')
                 perms.append((user, xaction))
             if self.manage_groups:
                 for provider in self.group_providers:
@@ -347,8 +353,8 @@ class LdapPermissionStore(Component):
         for action in actions:
             if action not in perms:
                 xaction = self._extract_action(action)
-                xaction = xaction.decode('utf-8')
                 if xaction:
+                    xaction = xaction.decode('utf-8')
                     perms.append(xaction)
         return perms
 
@@ -452,9 +458,12 @@ class LdapPermissionStore(Component):
         # if cache is full, removes the LRU entries
         if len(self._cache) >= self._cache_size:
             cache_keys = self._cache.keys()
-            cache_keys.sort(lambda x,y: cmp(self._cache[x][0],
-                                            self._cache[y][0]))
-            old_keys = cache_keys[:(5*self._cache_size)/100]
+            cache_keys = sorted(cache_keys,
+                                key=functools.cmp_to_key(
+                                    lambda x,y:
+                                    cmp(self._cache[x][0],
+                                        self._cache[y][0])))
+            old_keys = cache_keys[:int((5*self._cache_size)/100)+1]
             self.log.info("flushing %d cache entries" % len(old_keys))
             for k in old_keys:
                 del self._cache[k]
